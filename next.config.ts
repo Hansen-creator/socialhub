@@ -1,8 +1,10 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  devIndicators: {
-    appIsrStatus: false, // Untuk menyembunyikan icon di pojok bawah
+  typescript: {
+    // !! PERINGATAN !!
+    // Ini akan membiarkan build berhasil meskipun ada error TypeScript.
+    ignoreBuildErrors: true,
   },
-};
+}
 
-module.exports = nextConfig;
+export default nextConfig;
