@@ -278,11 +278,11 @@ const PostPopup = ({ postId, currentUser, onClose, usersMap }: {
       const allComments = snap.docs.map(doc => {
         const data = doc.data();
         return {
-          id: doc.id,
           ...data,
+          id: doc.id,
           userPhotoURL: usersMap[data.userId]?.photoURL,
-          replies: []
-        } as Comment;
+          replies: data.replies || [],
+        } as Comment; 
       });
       
       const commentMap = new Map();
