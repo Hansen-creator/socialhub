@@ -487,4 +487,165 @@ const MessageActionModal = ({ isOpen, onClose, message, onEdit, onDelete, onRepl
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10000 }}>
       <div style={{ background: 'white', padding: '20px', borderRadius: '12px' }}>
-        <button onClick={() => { onReply(message); onClose(); }}>Bal
+        <button onClick={() => { onReply(message); onClose(); }}>Balas</button>
+        <button onClick={onClose} style={{ marginLeft: '12px' }}>Batal</button>
+      </div>
+    </div>
+  );
+};
+
+export default function ChatClient() {
+  const router = useRouter();
+  const [user, setUser] = useState<User | null>(null);
+  const [chatRooms, setChatRooms] = useState<ChatRoom[]>([]);
+  const [activeChat, setActiveChat] = useState<ChatRoom | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [newMessage, setNewMessage] = useState('');
+  const [usersMap, setUsersMap] = useState<{ [key: string]: UserProfile }>({});
+  const [showActionMenu, setShowActionMenu] = useState({ open: false, uid: '', name: '' });
+  const [selectedPost, setSelectedPost] = useState<{ postId: string } | null>(null);
+  const [showAddFriendModal, setShowAddFriendModal] = useState(false);
+  const [showFriendsListModal, setShowFriendsListModal] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [isMobile, setIsMobile] = useState(false);
+  const [messageAction, setMessageAction] = useState<{ open: boolean, message: Message | null }>({ open: false, message: null });
+  const [replyToMessage, setReplyToMessage] = useState<Message | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const checkScreenSize = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      setSidebarOpen(!mobile);
+    };
+    checkScreenSize();
+    window.addEventListener('resize', checkScreenSize);
+    return () => window.removeEventListener('resize', checkScreenSize);
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = auth.onAuthStateChanged(async (u) => {
+      if (!u) router.push('/login');
+      else { setUser(u); await initializeUserInFirestore(u); }
+    });
+    return () => unsubscribe();
+  }, [router]);
+
+  useEffect(() => {
+    if (!user) return;
+    return onSnapshot(collection(db, 'users'), (snap) => {
+      const uMap: any = {};
+      snap.docs.forEach(d => uMap[d.id] = d.data());
+      setUsersMap(uMap);
+    });
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    const q = query(collection(db, 'chats'), where('participants', 'array-contains', user.uid), orderBy('updatedAt', 'desc'));
+    return onSnapshot(q, (snap) => {
+      setChatRooms(snap.docs.map(d => ({ id: d.id, ...d.data() })) as ChatRoom[]);
+    });
+  }, [user, refreshKey]);
+
+  useEffect(() => {
+    if (!activeChat || !user) return;
+    const q = query(collection(db, `chats/${activeChat.id}/messages`), orderBy('createdAt', 'asc'));
+    return onSnapshot(q, (snap) => {
+      setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() })) as Message[]);
+      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+    });
+  }, [activeChat, user]);
+
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newMessage.trim() || !user || !activeChat) return;
+    
+    const messageData = {
+      text: newMessage,
+      senderId: user.uid,
+      readBy: [user.uid],
+      createdAt: serverTimestamp()
+    };
+
+    setNewMessage('');
+    await addDoc(collection(db, `chats/${activeChat.id}/messages`), messageData);
+    await updateDoc(doc(db, 'chats', activeChat.id), { updatedAt: serverTimestamp(), lastMessage: newMessage });
+  };
+
+  const getFriendData = (participants: string[]) => {
+    return usersMap[participants.find(p => p !== user?.uid) || ''] || null;
+  };
+
+  const activeFriend = activeChat ? getFriendData(activeChat.participants) : null;
+  const totalFriends = Object.values(usersMap).filter(u => u.friends?.includes(user?.uid || '')).length;
+
+  return (
+    <div style={{ display: 'flex', height: 'calc(100vh - 60px)', marginTop: '60px', overflow: 'hidden' }}>
+      
+      {/* SIDEBAR */}
+      <aside style={{ width: sidebarOpen ? '320px' : '0', background: 'white', borderRight: '1px solid #e0e0e0', display: 'flex', flexDirection: 'column', transition: 'width 0.3s' }}>
+        <div style={{ padding: '20px', borderBottom: '1px solid #f0f0f0' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h1>Obrolan</h1>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <FriendRequestNotifications currentUser={user!} usersMap={usersMap} onRequestResponded={() => setRefreshKey(k => k + 1)} />
+              <button onClick={() => setShowFriendsListModal(true)} className="friends-btn" aria-label="Buka daftar teman">
+                <FontAwesomeIcon icon={faUsers} /> {totalFriends}
+              </button>
+            </div>
+          </div>
+        </div>
+        <div style={{ flex: 1, overflowY: 'auto' }}>
+          {chatRooms.map(room => {
+            const friend = getFriendData(room.participants);
+            return (
+              <div key={room.id} onClick={() => { setActiveChat(room); if (isMobile) setSidebarOpen(false); }} style={{ padding: '15px', cursor: 'pointer', background: activeChat?.id === room.id ? '#f0f7ff' : 'transparent' }}>
+                <strong>{friend?.displayName || 'User'}</strong>
+                <p style={{ fontSize: '12px', color: '#888', margin: 0 }}>{room.lastMessage || 'Mulai percakapan...'}</p>
+              </div>
+            );
+          })}
+        </div>
+      </aside>
+
+      {/* CHAT MAIN CONTENT */}
+      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#f5f5f5' }}>
+        {activeChat && activeFriend ? (
+          <>
+            <header style={{ padding: '15px 20px', background: 'white', borderBottom: '1px solid #e0e0e0', display: 'flex', alignItems: 'center', gap: '12px' }}>
+              {isMobile && <button onClick={() => setSidebarOpen(true)} aria-label="Buka menu obrolan"><FontAwesomeIcon icon={faArrowLeft} /></button>}
+              <h2>{activeFriend.displayName}</h2>
+            </header>
+
+            <section style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {messages.map(m => (
+                <div key={m.id} style={{ alignSelf: m.senderId === user?.uid ? 'flex-end' : 'flex-start', background: m.senderId === user?.uid ? '#dcf8c6' : 'white', padding: '10px', borderRadius: '8px', maxWidth: '70%' }}>
+                  <p style={{ margin: 0 }}>{m.text}</p>
+                </div>
+              ))}
+              <div ref={messagesEndRef} />
+            </section>
+
+            <footer style={{ padding: '15px', background: 'white', borderTop: '1px solid #e0e0e0' }}>
+              <form onSubmit={handleSendMessage} style={{ display: 'flex', gap: '10px' }}>
+                <button type="button" style={{ padding: '10px' }} aria-label="Lampirkan berkas file multimedia"><FontAwesomeIcon icon={faPaperclip} /></button>
+                <label htmlFor="chat-input" style={{ display: 'none' }}>Ketik pesan obrolan</react-form-label>
+                <input id="chat-input" type="text" value={newMessage} onChange={e => setNewMessage(e.target.value)} placeholder="Ketik pesan..." style={{ flex: 1, padding: '10px', borderRadius: '20px', border: '1px solid #ddd' }} />
+                <button type="submit" disabled={!newMessage.trim()} aria-label="Kirim pesan sekarang" style={{ padding: '10px 20px', background: '#4285F4', color: 'white', border: 'none', borderRadius: '20px' }}><FontAwesomeIcon icon={faPaperPlane} /></button>
+              </form>
+            </footer>
+          </>
+        ) : (
+          <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', flexDirection: 'column', color: '#999' }}>
+            <p>Silakan pilih obrolan untuk memulai diskusi tim.</p>
+          </div>
+        )}
+      </main>
+
+      <AddFriendModal isOpen={showAddFriendModal} onClose={() => setShowAddFriendModal(false)} currentUser={user!} onFriendRequestSent={() => setRefreshKey(k => k + 1)} />
+      <FriendsListModal isOpen={showFriendsListModal} onClose={() => setShowFriendsListModal(false)} currentUser={user!} usersMap={usersMap} />
+    </div>
+  );
+}
